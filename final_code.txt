@@ -1,0 +1,171 @@
+(deffunction ask-question (?question $?allowed-values)   ;реализация диалога с пользователем
+   (printout t ?question)	; вывод вопроса
+   (bind ?answer (read))	; ввод ответа
+   (if (lexemep ?answer) 	; если  введено строковое значение
+       then (bind ?answer (lowcase ?answer))) 		;то символы строки преобразуем в строчные
+   (while (not (member ?answer ?allowed-values)) do	; пока пользователь не введет ответ, принадлежащий списку допустимых значений, повторять ввод
+      (printout t ?question)
+      (bind ?answer (read))
+      (if (lexemep ?answer) 
+          then (bind ?answer (lowcase ?answer))))
+   ?answer)
+
+
+(deffunction yes-or-no-p (?question)			;логическая функция, задающая пользователю вопрос и допускающая ответ в виде да/нет. 
+   (bind ?response (ask-question ?question yes no y n))
+   (if (or (eq ?response yes) (eq ?response y))
+       then TRUE 
+       else FALSE))
+
+
+
+(defrule determine-player-state ""
+   (not (working-state player?))
+   (not (repair ?))
+   =>
+   (if (yes-or-no-p "Плеер включается (yes/no)? ") 
+       then 
+       (if (yes-or-no-p "Плеер работает нормально (yes/no)? ")
+           then (assert (working-state player normal))
+           else (assert (working-state player unsatisfactory)))
+       else 
+       (assert (working-state player does-not-start))))
+
+
+
+(defrule determine-rotation-state ""
+   (working-state player does-not-start)
+   (not (rotation-state disk ?))
+   (not (repair ?))   
+   =>
+   (if (yes-or-no-p "Батарейки заряжены (yes/no)? ")
+      then	  
+        (assert (charge-state battery charged)) ; аккумулятор заряжен
+       else
+	    (assert (repair "Зарядите или замените батарейки."))  ; рекомендация
+	     (assert (charge-state battery dead))))  ; аккумулятор разряжен
+
+
+(defrule determine-sound-level ""
+   (working-state player does-not-start)
+   (rotation-state disk rotates)
+   (not (repair ?))
+   =>
+   (if (not (yes-or-no-p "На диске есть песни (yes/no)? "))
+       then  (assert (repair "Загрузить песни."))))
+
+
+
+
+(defrule determine-low-output ""
+   (working-state player unsatisfactory)  ;
+   (not (symptom quality low-output | not-low-output))
+   (not (repair ?))
+   =>
+   (if (yes-or-no-p "Качество звука низкое(yes/no)? ")
+       then
+	(assert (symptom quality low-output))  ; низкое кач
+       else
+	(assert (symptom quality not-low-output)))) ; нормальное кач 
+
+
+
+ (defrule determine-point-surface-state ""
+   (or (and (working-state player does-not-start) ; не вкл     
+           (rotate-state disk irregular-spark))   ; и плохое вращение
+       (symptom quality low-output))               ; или низкая мощность 
+   (not (repair ?))
+   =>
+   (bind ?response 
+(ask-question "Каково состояние наушников (norm/opal/zagr)? "
+             norm opal zagr))
+   (if (eq ?response opal) 
+       then 
+	(assert (repair "Замените наушники."))  ; рекомендация
+       else (if (eq ?response zagr)
+                then
+		 (assert (repair "Почистите разъем для наушников."))))) ; рекомендация
+
+;8правило
+
+
+;правило 9
+
+(defrule determine-sluggishness ""
+   (working-state player unsatisfactory)
+   (not (repair ?))
+   =>
+   (if (yes-or-no-p "Не реагирует на клавишу запуск музыки(возможно треки повредились) (yes/no)? ")
+       then
+	(assert (repair "Закачать новые треки.")))) ; рекомендация
+
+
+;;;  (см. правило 10).
+
+(defrule determine-misfiring ""
+   (working-state player unsatisfactory)
+   (not (repair ?))
+   =>
+   (if (yes-or-no-p "Перебои с вращением диска есть(yes/no)? ")
+       then
+	(assert (repair "Закройте плотно крышку плеера.")) ; рекомендация      
+	(assert (rotate-state disk irregular-spark)))) ; плохое вращение
+
+;;;  Выполнение диагностических правил прекращается.
+
+(defrule determine-knocking ""
+   (working-state player unsatisfactory)
+   (not (repair ?))
+   =>
+   (if (yes-or-no-p "Есть скрежет при чтении диска (yes/no)? ")
+       then
+	 (assert (repair "Правильно вставьте диск.")))) ; рекомендация
+;;;********************************************************************
+
+(defrule normal-player-state-conclusions ""
+   (declare (salience 10))
+   (working-state player normal)    ; Если плеер работает нормально
+   =>
+   (assert (repair "Ремонт не нужен."))     ; ремонт не нужен
+   (assert (rotate-state disk normal))      ; вращение в норме
+   (assert (charge-state battery charged))  ; аккумулятор заряжен
+   (assert (rotation-state disk rotates)))  ; диск вращается
+
+;;;
+(defrule unsatisfactory-player-state-conclusions ""
+   (declare (salience 10))
+    ; 
+   (working-state player unsatisfactory)
+   =>
+   (assert (charge-state battery charged))	; аккумулятор заряжен
+   (assert (rotation-state disk rotates)))	; диск вращается
+;;;********************************************************************
+;;;   Запуск и завершение программы
+;;;********************************************************************
+;;; Правило no-repairs запускается в случае, если ни одно из
+;;; диагностических правил не способно определить неисправность. 
+;;; Правило корректно прерывает выполнение экспертной системы и 
+;;; предлагает пройти более тщательную проверку
+(defrule no-repairs ""
+  (declare (salience -10)) 		; равного -10, гарантирует, что правило не будет выполнено, пока в плане решения задачи находится, по крайней мере, одно из диагностических правил. 
+  (not (repair ?))
+  =>
+  (assert (repair "Обратитесь в сервисную службу.")))
+
+
+(defrule print-repair ""		;repair выводит на экран диагностическое сообщение по устранению найденной неисправности
+  (declare (salience 10))
+  (repair ?item)
+  =>
+  (printout t crlf crlf)
+  (printout t "Рекомендации по ремонту:")
+  (printout t crlf crlf)
+  (format t " %s%n%n%n" ?item))
+
+(defrule system-banner ""		;метод вывода итоговой информации и правила, сообщающего пользователю о начале работы
+  (declare (salience 10))
+  =>
+  (printout t crlf crlf)
+  (printout t "Экспертная система MyExpert")
+  (printout t crlf crlf)
+)
